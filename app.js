@@ -173,15 +173,29 @@ function ruleFor(hall, m, d) {
   return best;
 }
 
+// Volume pricing: once guests exceed a tier's threshold, that price applies to ALL guests.
+function tierValue(base, tiers, guests) {
+  let value = num(base);
+  let over = null;
+  for (const t of tiers || []) {
+    if (!hasVal(t.from) || !hasVal(t.value)) continue;
+    const f = num(t.from);
+    if (guests > f && (over == null || f > over)) { value = num(t.value); over = f; }
+  }
+  return { value, over };
+}
+const tierNote = (over) => (over != null ? ` · מחיר מעל ${over} אורחים` : '');
+
 function calc(hall, rule, guests, contractors) {
   const minG = num(hall.minGuests);
   const billed = Math.max(guests, minG);
-  const price = num(rule.price);
+  const pt = tierValue(rule.price, rule.tiers, billed);
+  const price = pt.value;
   const lines = [];
   const food = billed * price;
   lines.push({
     label: 'מנות אורחים',
-    detail: `${billed.toLocaleString('he-IL')} × ${fmt(price)}${billed > guests ? ` (מינימום ${minG})` : ''}`,
+    detail: `${billed.toLocaleString('he-IL')} × ${fmt(price)}${tierNote(pt.over)}${billed > guests ? ` (מינימום ${minG})` : ''}`,
     amount: food,
   });
   const cPrice = hasVal(rule.contractorPrice) ? num(rule.contractorPrice) : num(hall.contractorPrice);
@@ -189,18 +203,20 @@ function calc(hall, rule, guests, contractors) {
   if (contractors > 0) lines.push({ label: 'ארוחות ספקים', detail: `${contractors} × ${fmt(cPrice)}`, amount: cCost });
   const base = food + cCost;
   for (const x of hall.extras) {
-    const a = num(x.amount);
+    const xt = tierValue(x.amount, x.tiers, billed);
+    const a = xt.value;
     if (!a) continue;
     let amount = a;
     let detail = '';
     if (x.type === 'perGuest') { amount = a * billed; detail = `${billed} × ${fmt(a)}`; }
     else if (x.type === 'percent') { amount = (base * a) / 100; detail = `${a}% מ-${fmt(base)}`; }
+    if (xt.over != null) detail = (detail + tierNote(xt.over)).replace(/^ · /, '');
     lines.push({ label: x.name || 'תוספת', detail, amount });
   }
   const subtotal = lines.reduce((s, l) => s + l.amount, 0);
   const vat = hall.vatExcluded ? (subtotal * num(state.vatRate)) / 100 : 0;
   const total = subtotal + vat;
-  return { lines, subtotal, vat, total, perGuest: guests ? total / guests : 0 };
+  return { lines, subtotal, vat, total, price, billed, perGuest: guests ? total / guests : 0 };
 }
 
 // Cheapest / priciest total over every (month, day) that passes the filter.
@@ -214,10 +230,10 @@ function hallSummary(hall, guests, contractors, filter) {
       if (filter.day != null && filter.day !== d) continue;
       const r = ruleFor(hall, m, d);
       if (!r) continue;
-      if (!cache.has(r.id)) cache.set(r.id, calc(hall, r, guests, contractors).total);
-      const total = cache.get(r.id);
-      if (!min || total < min.total) min = { total, m, d, rule: r };
-      if (!max || total > max.total) max = { total, m, d, rule: r };
+      if (!cache.has(r.id)) cache.set(r.id, calc(hall, r, guests, contractors));
+      const { total, price } = cache.get(r.id);
+      if (!min || total < min.total) min = { total, price, m, d, rule: r };
+      if (!max || total > max.total) max = { total, price, m, d, rule: r };
     }
   }
   return { min, max };
@@ -364,7 +380,7 @@ function renderHallList() {
       return `<button class="hall-card ${isBest ? 'best' : ''}" data-action="open-hall" data-id="${h.id}">
         <div class="hc-top"><div class="hc-name"><span class="rank">${i + 1}</span>${name}</div>${isBest ? '<span class="badge">הכי משתלם</span>' : ''}</div>
         <div class="hc-price">${fmt(s.min.total)}${range ? `<span class="hc-to"> – ${fmt(s.max.total)}</span>` : ''}</div>
-        <div class="hc-meta">${fmt(s.min.rule.price)} למנה · ${fmt(g ? s.min.total / g : 0)} לאורח עם הכל</div>
+        <div class="hc-meta">${fmt(s.min.price)} למנה · ${fmt(g ? s.min.total / g : 0)} לאורח עם הכל</div>
         ${exact ? '' : `<div class="hc-when">${ICON.cal}הכי זול: ${esc(describeRule(s.min.rule))}</div>`}
         ${diff >= 1 ? `<div class="hc-diff">+${fmt(diff)}</div>` : ''}
       </button>`;
@@ -468,16 +484,22 @@ function renderRules(h) {
         <div class="rule-when">
           <div class="rule-months">${esc(monthsLabel(r.months))}</div>
           <div class="rule-days">${esc(daysLabel(r.days))}</div>
+          ${tiersSummary(r) ? `<div class="rule-note">${esc(tiersSummary(r))}</div>` : ''}
           ${r.note ? `<div class="rule-note">${esc(r.note)}</div>` : ''}
         </div>
         <div class="rule-price">
-          <div class="pp">${fmt(r.price)}<small> למנה</small></div>
+          <div class="pp">${fmt(c.price)}<small> למנה</small></div>
           <div class="tot">סה״כ ${fmt(c.total)}</div>
         </div>
       </button>
       <button class="rule-edit" data-action="edit-rule" data-rule="${r.id}" aria-label="עריכה">${ICON.edit}</button>
     </div>`;
   }).join('');
+}
+
+function tiersSummary(r) {
+  const t = (r.tiers || []).filter((x) => hasVal(x.from) && hasVal(x.value)).sort((a, b) => num(a.from) - num(b.from));
+  return t.length ? `${fmt(r.price)}, ${t.map((x) => `מעל ${num(x.from)}: ${fmt(x.value)}`).join(', ')}` : '';
 }
 
 function renderDateCheck(h) {
@@ -493,7 +515,7 @@ function renderDateCheck(h) {
   const { guests, contractors } = hallCounts(h);
   const c = calc(h, r, guests, contractors);
   el.innerHTML = `<button class="date-result" data-action="breakdown" data-rule="${r.id}" data-m="${m}" data-d="${d}" data-date="${v}">
-    <div><div class="label">${DAYS[d]}, ${dt.getDate()} ב${MONTHS[m]}</div><div class="hint">${fmt(r.price)} למנה · ${esc(describeRule(r))}</div></div>
+    <div><div class="label">${DAYS[d]}, ${dt.getDate()} ב${MONTHS[m]}</div><div class="hint">${fmt(c.price)} למנה · ${esc(describeRule(r))}</div></div>
     <div class="big">${fmt(c.total)}</div></button>`;
 }
 
@@ -501,6 +523,8 @@ function renderGrid(h) {
   const el = $('#price-grid');
   if (!el) return;
   if (!h.rules.length) { el.innerHTML = '<p class="hint pad">הוסיפו תמחור כדי לראות את הלוח</p>'; return; }
+  const billed = Math.max(hallCounts(h).guests, num(h.minGuests));
+  const priceOf = (r) => tierValue(r.price, r.tiers, billed).value;
   const grid = [];
   let lo = Infinity;
   let hi = -Infinity;
@@ -509,16 +533,16 @@ function renderGrid(h) {
     for (let d = 0; d < 7; d++) {
       const r = ruleFor(h, m, d);
       grid[m][d] = r;
-      if (r) { lo = Math.min(lo, num(r.price)); hi = Math.max(hi, num(r.price)); }
+      if (r) { lo = Math.min(lo, priceOf(r)); hi = Math.max(hi, priceOf(r)); }
     }
   }
   const heat = (p) => (hi > lo ? 12 + ((p - lo) / (hi - lo)) * 78 : 35);
   el.innerHTML = `<table class="grid"><thead><tr><th></th>${DAYS_SHORT.map((d) => `<th>${d}</th>`).join('')}</tr></thead><tbody>
     ${grid.map((row, m) => `<tr><th>${MONTHS_SHORT[m]}</th>${row.map((r, d) => (r
-      ? `<td><button class="${heat(num(r.price)) > 60 ? 'hot' : ''}" style="--heat:${heat(num(r.price)).toFixed(0)}%" data-action="breakdown" data-rule="${r.id}" data-m="${m}" data-d="${d}">${Math.round(num(r.price))}</button></td>`
+      ? `<td><button class="${heat(priceOf(r)) > 60 ? 'hot' : ''}" style="--heat:${heat(priceOf(r)).toFixed(0)}%" data-action="breakdown" data-rule="${r.id}" data-m="${m}" data-d="${d}">${Math.round(priceOf(r))}</button></td>`
       : '<td class="none">–</td>')).join('')}</tr>`).join('')}
     </tbody></table>
-    <div class="grid-legend"><span>מחיר למנה ב-₪ · הקישו לפירוט</span><span>${fmt(lo)} – ${fmt(hi)}</span></div>`;
+    <div class="grid-legend"><span>מחיר למנה ל-${billed} אורחים · הקישו לפירוט</span><span>${fmt(lo)} – ${fmt(hi)}</span></div>`;
 }
 
 function renderExtras(h) {
@@ -534,9 +558,40 @@ function renderExtras(h) {
         </div>
         <div class="ac-list"></div>
         <div class="seg">${Object.keys(TYPE_LABELS).map((t) => `<button class="${x.type === t ? 'on' : ''}" data-action="extra-type" data-id="${x.id}" data-type="${t}">${TYPE_LABELS[t]}</button>`).join('')}</div>
+        <div class="tiers">${(x.tiers || []).map((t) => tierRow(t, x.type === 'percent' ? '%' : '₪', `data-xtier data-id="${x.id}"`, 'del-extra-tier', `data-id="${x.id}"`)).join('')}</div>
+        <div class="extra-foot">
+          <button class="text-btn sm" data-action="add-extra-tier" data-id="${x.id}">${ICON.plus}מחיר לפי כמות אורחים</button>
+          <span class="extra-calc" data-calc="${x.id}"></span>
+        </div>
       </div>`).join('')
     : '<p class="hint">עדיין אין חיובים. בחרו מהרשימה למטה או הוסיפו ידנית.</p>';
   renderExtraPresets(h);
+  renderExtraCalcs(h);
+}
+
+// One "above N guests → price" row, shared by meal rules and extra charges.
+function tierRow(t, unit, attrs, delAction, delAttrs) {
+  return `<div class="tier-row">
+    <span>מעל</span>
+    <input class="tier-from" type="number" inputmode="numeric" ${attrs} data-tid="${t.id}" data-f="from" value="${esc(t.from)}" placeholder="200">
+    <span class="grow">אורחים</span>
+    <div class="money-input"><input type="number" inputmode="decimal" ${attrs} data-tid="${t.id}" data-f="value" value="${esc(t.value)}" placeholder="0"><span>${unit}</span></div>
+    <button class="x-btn" data-action="${delAction}" ${delAttrs} data-tid="${t.id}" aria-label="מחיקה">×</button>
+  </div>`;
+}
+
+// Live "what this charge comes to" line for the hall's current guest count.
+function renderExtraCalcs(h) {
+  const billed = Math.max(hallCounts(h).guests, num(h.minGuests));
+  for (const x of h.extras) {
+    const el = document.querySelector(`[data-calc="${x.id}"]`);
+    if (!el) continue;
+    const { value, over } = tierValue(x.amount, x.tiers, billed);
+    let text = '';
+    if (value && x.type === 'perGuest') text = `${billed} × ${fmt(value)} = ${fmt(value * billed)}`;
+    else if (value && over != null) text = `ל-${billed} אורחים: ${x.type === 'percent' ? `${value}%` : fmt(value)}`;
+    el.textContent = text;
+  }
 }
 
 function renderExtraPresets(h) {
@@ -668,7 +723,8 @@ function openRuleEditor(h, rule) {
   const isNew = !rule;
   const draft = rule
     ? { ...rule, months: [...rule.months], days: [...rule.days] }
-    : { id: uid(), months: [], days: [], price: '', contractorPrice: '', note: '' };
+    : { id: uid(), months: [], days: [], price: '', contractorPrice: '', note: '', tiers: [] };
+  draft.tiers = (draft.tiers || []).map((t) => ({ ...t }));
   openSheet(isNew ? 'תמחור חדש' : 'עריכת תמחור', `
     <div class="label">חודשים</div>
     <div class="toggle-grid months" id="rule-months"></div>
@@ -684,12 +740,22 @@ function openRuleEditor(h, rule) {
       <div class="divider"></div>
       <label class="field-row"><span>הערה</span><input type="text" id="rule-note" value="${esc(draft.note)}" placeholder="למשל: כולל בר"></label>
     </div>
+    <div class="label">מחיר לפי כמות אורחים</div>
+    <div class="card">
+      <div class="tiers" id="rule-tiers"></div>
+      <button class="add-row" data-action="add-rule-tier">${ICON.plus}מדרגת מחיר</button>
+    </div>
+    <p class="hint">לדוגמה: ₪400 למנה, ומעל 200 אורחים ₪385 — המחיר החדש חל על כל האורחים.</p>
     <p class="hint">אם כמה תמחורים חלים על אותו תאריך — התמחור המצומצם ביותר קובע (למשל ״ספטמבר · חמישי״ גובר על ״כל השנה״).</p>
     <div class="sheet-actions">
       <button class="btn primary" data-action="save-rule">שמירה</button>
       ${isNew ? '' : `<div class="btn-row"><button class="btn ghost" data-action="dup-rule">שכפול</button><button class="btn ghost" style="color:var(--danger)" data-action="del-rule">מחיקה</button></div>`}
     </div>`, { type: 'rule', hallId: h.id, draft, isNew });
   renderRuleToggles();
+  renderRuleTiers();
+}
+function renderRuleTiers() {
+  $('#rule-tiers').innerHTML = sheet.draft.tiers.map((t) => tierRow(t, '₪', 'data-rtier', 'del-rule-tier', '')).join('');
 }
 function renderRuleToggles() {
   const d = sheet.draft;
@@ -709,6 +775,12 @@ function readRuleDraft() {
   d.price = $('#rule-price').value === '' ? '' : num($('#rule-price').value);
   d.contractorPrice = $('#rule-cprice').value === '' ? '' : num($('#rule-cprice').value);
   d.note = $('#rule-note').value.trim();
+  for (const t of d.tiers) {
+    for (const f of ['from', 'value']) {
+      const v = $(`[data-rtier][data-tid="${t.id}"][data-f="${f}"]`)?.value ?? '';
+      t[f] = v === '' ? '' : num(v);
+    }
+  }
   return d;
 }
 
@@ -805,6 +877,7 @@ function refresh() {
     renderRules(h);
     renderDateCheck(h);
     renderGrid(h);
+    renderExtraCalcs(h);
   } else {
     renderHallList();
     const t = $('#con-total');
@@ -924,6 +997,34 @@ document.addEventListener('click', (e) => {
       save(); renderExtras(h); refresh();
       break;
     }
+    case 'add-rule-tier': {
+      readRuleDraft();
+      const tiers = sheet.draft.tiers;
+      tiers.push({ id: uid(), from: '', value: '' });
+      renderRuleTiers();
+      $(`[data-rtier][data-tid="${tiers.at(-1).id}"][data-f="from"]`)?.focus();
+      break;
+    }
+    case 'del-rule-tier':
+      readRuleDraft();
+      sheet.draft.tiers = sheet.draft.tiers.filter((x) => x.id !== t.dataset.tid);
+      renderRuleTiers();
+      break;
+    case 'add-extra-tier': {
+      const x = h.extras.find((y) => y.id === t.dataset.id);
+      if (!x) break;
+      const tier = { id: uid(), from: '', value: '' };
+      (x.tiers ||= []).push(tier);
+      save(); renderExtras(h);
+      $(`[data-xtier][data-tid="${tier.id}"][data-f="from"]`)?.focus();
+      break;
+    }
+    case 'del-extra-tier': {
+      const x = h.extras.find((y) => y.id === t.dataset.id);
+      if (x) x.tiers = (x.tiers || []).filter((y) => y.id !== t.dataset.tid);
+      save(); renderExtras(h); refresh();
+      break;
+    }
     case 'ac-pick': {
       const row = t.closest('.extra-row, .con-row');
       const input = row.querySelector('[data-ac]');
@@ -947,6 +1048,7 @@ document.addEventListener('click', (e) => {
     case 'save-rule': {
       const d = readRuleDraft();
       if (!(num(d.price) > 0)) { $('#rule-price').focus(); toast('הזינו מחיר למנה'); return; }
+      d.tiers = d.tiers.filter((x) => hasVal(x.from) && hasVal(x.value)).sort((a, b) => a.from - b.from);
       const hall = findHall(sheet.hallId);
       const i = hall.rules.findIndex((r) => r.id === d.id);
       if (i >= 0) hall.rules[i] = d; else hall.rules.push(d);
@@ -957,11 +1059,12 @@ document.addEventListener('click', (e) => {
     case 'dup-rule': {
       const d = readRuleDraft();
       const hall = findHall(sheet.hallId);
-      const copy = { ...d, id: uid(), months: [...d.months], days: [...d.days] };
+      const copy = { ...d, id: uid(), months: [...d.months], days: [...d.days], tiers: d.tiers.map((x) => ({ ...x, id: uid() })) };
       openRuleEditor(hall, null);
       sheet.draft = copy;
       $('#rule-price').value = copy.price; $('#rule-cprice').value = copy.contractorPrice; $('#rule-note').value = copy.note;
       renderRuleToggles();
+      renderRuleTiers();
       toast('עותק — שנו חודשים/ימים ושמרו');
       break;
     }
@@ -1004,6 +1107,12 @@ document.addEventListener('input', (e) => {
     else h[f] = t.value;
     save();
     if (f !== 'name' && f !== 'notes' && f !== 'contact') refresh();
+    return;
+  }
+  if (t.hasAttribute('data-xtier') && h) {
+    const tier = h.extras.find((y) => y.id === t.dataset.id)?.tiers?.find((y) => y.id === t.dataset.tid);
+    if (tier) tier[t.dataset.f] = t.value === '' ? '' : num(t.value);
+    save(); refresh();
     return;
   }
   if (t.dataset.extraField && h) {

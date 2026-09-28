@@ -3,10 +3,10 @@
 A Hebrew (RTL) PWA for comparing wedding hall prices, built mainly for iPhone. It has no build step and no dependencies.
 
 ## Features
-- **Price per guest by month and weekday.** For example, "September · Thursday" costs ₪450 and "October · Thursday" costs ₪550. When several rules match the same date, the most specific one wins.
+- **Price per guest by month and weekday**, with optional guest-count tiers (e.g. ₪400, or ₪385 for everyone above 200 guests). For example, "September · Thursday" costs ₪450 and "October · Thursday" costs ₪550. When several rules match the same date, the most specific one wins.
 - **Guest count** on the main screen. You can override it inside a hall, and again inside a single price breakdown.
 - **Contractor meals** (photographers, DJ, and so on). You set the list and counts once. Each hall has its own meal price, and a single price rule can override it.
-- **Extra charges** with preset suggestions and autocomplete. Each charge can be a fixed amount, a per-guest amount, or a percentage of the meals (for example, a service fee).
+- **Extra charges** with preset suggestions and autocomplete, also with optional guest-count tiers. Each charge can be a fixed amount, a per-guest amount, or a percentage of the meals (for example, a service fee).
 - Minimum guest count, VAT toggle per hall, and a price grid (month × weekday).
 - Main screen sorts halls from cheapest to most expensive. You can filter by month, weekday or a specific date.
 - Offline support, a JSON backup that you can export and import, and a share button for the breakdown.

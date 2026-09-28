@@ -1,4 +1,4 @@
-const CACHE = 'halls-v1';
+const CACHE = 'halls-v2';
 const ASSETS = [
   './',
   './index.html',
