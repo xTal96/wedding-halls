@@ -23,4 +23,4 @@ The service worker needs HTTPS. You can host the folder for free on GitHub Pages
 Your data lives in the device's localStorage. Use **Settings → Export backup** now and then, or to move your data to another phone.
 
 ## Updating
-After you change any file, bump `CACHE` in `sw.js` (for example, `halls-v2`) so installed copies pick up the new version.
+After you change any file, bump `CACHE` in `sw.js` (for example, `halls-v4`) and push. When online, the app always loads the latest files. When it comes back to the foreground it checks for a new version and reloads itself once the new version is ready. The version shows at the bottom of ⚙️ Settings.

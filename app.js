@@ -827,7 +827,9 @@ function openSettings() {
     <input type="file" id="import-file" accept="application/json,.json" hidden>
     <div class="label">התקנה באייפון</div>
     <p class="hint" style="margin:0 2px 10px">בספארי: כפתור השיתוף ← ״הוספה למסך הבית״. האפליקציה תעבוד גם בלי אינטרנט.</p>
-    <button class="btn danger" data-action="wipe">מחיקת כל הנתונים</button>`, { type: 'settings' });
+    <button class="btn danger" data-action="wipe">מחיקת כל הנתונים</button>
+    <p class="hint" id="app-version" style="text-align:center;margin-top:14px"></p>`, { type: 'settings' });
+  caches?.keys().then((k) => { const el = $('#app-version'); if (el) el.textContent = `גרסה: ${k.find((x) => x.startsWith('halls-')) || '—'}`; }).catch(() => {});
 }
 async function exportData() {
   flush();
@@ -1168,5 +1170,21 @@ document.addEventListener('keydown', (e) => {
    ========================================================= */
 render();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  addEventListener('load', async () => {
+    let reg;
+    try { reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }); } catch (e) { return; }
+    // iOS resumes home-screen apps from memory instead of relaunching them, so check on every return.
+    document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && reg.update().catch(() => {}));
+  });
+  // A new version took over: reload once so it shows up (data is already saved).
+  // The very first install needs no reload — the page was just loaded from the network.
+  let hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) { hadController = true; return; }
+    if (reloading) return;
+    reloading = true;
+    flush();
+    location.reload();
+  });
 }
